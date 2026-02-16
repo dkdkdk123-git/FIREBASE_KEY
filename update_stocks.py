@@ -3,8 +3,9 @@ from firebase_admin import credentials, db
 import yfinance as yf
 import os
 import json
+from datetime import datetime, timedelta
 
-# 1. Firebaseの認証設定
+# --- 1. Firebase認証 ---
 key_json = os.environ.get('FIREBASE_KEY')
 if not key_json:
     raise ValueError("FIREBASE_KEY is not set")
@@ -16,56 +17,47 @@ if not firebase_admin._apps:
         'databaseURL': 'https://cross-56caf-default-rtdb.asia-southeast1.firebasedatabase.app/'
     })
 
+def calculate_cost(price, shares, month):
+    # 権利付最終日を「その月の最終営業日の3日前」と仮定（簡易計算）
+    today = datetime.now()
+    year = today.year if today.month <= month else today.year + 1
+    # その月の月末日
+    if month == 12:
+        last_day = datetime(year, 12, 31)
+    else:
+        last_day = datetime(year, month + 1, 1) - timedelta(days=1)
+    
+    # 権利付最終日の目安（月末から3日前）
+    expiry_date = last_day - timedelta(days=3)
+    days_to_expiry = (expiry_date - today).days
+    days_to_expiry = max(1, days_to_expiry) # 最低1日
+
+    # 日興証券の貸株料率 (年利3.9%)
+    fee_rate = 0.039
+    cost = price * shares * fee_rate * (days_to_expiry / 365)
+    return int(cost)
+
 def update_stock_data():
-    # 2. 銘柄の設定（ここで優待価値やコストを決める）
-    # 銘柄コード: { 優待価値, クロスコスト, 必要株数, 名前 }
-   # 銘柄の設定（ここであなたの「見積もり」を入れます）
+    # 銘柄リスト：ここで権利月(month)を設定！
     stock_settings = {
-        # 銘柄コード: { 名前, 優待の価値(円), 推定コスト(円), 必要株数 }
-        "2702": {"name": "日本マクドナルド", "value": 5000, "cost": 600, "shares": 100},
-        "9861": {"name": "吉野家HD", "value": 2000, "cost": 300, "shares": 100},
-        "8136": {"name": "サンリオ", "value": 4000, "cost": 400, "shares": 100},
-        "2503": {"name": "キリンHD", "value": 1000, "cost": 150, "shares": 100},
+        "2702": {"name": "マクドナルド", "value": 5000, "shares": 100, "month": 6},
+        "9861": {"name": "吉野家HD", "value": 2000, "shares": 100, "month": 8},
+        "3048": {"name": "ビックカメラ", "value": 3000, "shares": 100, "month": 8},
+        "8136": {"name": "サンリオ", "value": 4000, "shares": 100, "month": 3},
     }
 
     updated_data = {}
-
     for code, info in stock_settings.items():
         try:
-            # 3. Yahoo Financeから本物の株価を取得 (.Tは東証)
-            ticker_symbol = f"{code}.T"
-            ticker = yf.Ticker(ticker_symbol)
+            ticker = yf.Ticker(f"{code}.T")
+            current_price = ticker.history(period="1d")['Close'].iloc[-1]
             
-            # 最新の終値を取得
-            history = ticker.history(period="1d")
-            if history.empty:
-                print(f"Could not find data for {ticker_symbol}")
-                continue
-            
-            current_price = history['Close'].iloc[-1]
+            # コストと実質利回りを計算
+            cost = calculate_cost(current_price, info["shares"], info["month"])
+            net_profit = info["value"] - cost
+            real_yield = (net_profit / (current_price * info["shares"])) * 100
 
-            # 4. 利回りの計算式
-            # (優待価値 - コスト) / (株価 * 株数) * 100
-            net_profit = info["value"] - info["cost"]
-            investment = current_price * info["shares"]
-            real_yield = (net_profit / investment) * 100
-
-            # Firebaseに送る形に整える
             updated_data[code] = {
                 "name": info["name"],
-                "yield": round(real_yield, 2),  # 小数点2位まで
-                "nikko": "○", # ここは後で自動化も可能
-                "rakuten": "×"
-            }
-            print(f"{info['name']}: 株価={current_price}, 利回り={round(real_yield, 2)}%")
-
-        except Exception as e:
-            print(f"Error updating {code}: {e}")
-
-    # 5. Firebaseの「stocks/0」を更新
-    if updated_data:
-        db.reference('stocks/0').update(updated_data)
-        print("Successfully updated Firebase!")
-
-if __name__ == "__main__":
-    update_stock_data()
+                "yield": round(real_yield, 2),
+                "month":
