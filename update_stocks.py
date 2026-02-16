@@ -9,10 +9,14 @@ firebase_key_raw = os.environ.get('FIREBASE_KEY')
 
 if firebase_key_raw:
     # 金庫（Secrets）から鍵を取り出す
-    key_dict = json.loads(firebase_key_raw)
-    cred = credentials.Certificate(key_dict)
+    try:
+        key_dict = json.loads(firebase_key_raw)
+        cred = credentials.Certificate(key_dict)
+    except Exception as e:
+        print(f"JSONの読み込みに失敗しました: {e}")
+        raise
 else:
-    # もし金庫になければ、直接ファイルを探す（ローカル用）
+    # もし金庫になければ、直接ファイルを探す（ローカル実行用）
     cred = credentials.Certificate("serviceAccountKey.json")
 
 # Firebaseに接続（あなたのURL）
@@ -21,7 +25,7 @@ if not firebase_admin._apps:
         'databaseURL': 'https://cross-56caf-default-rtdb.asia-southeast1.firebasedatabase.app/'
     })
 
-# テストデータ更新
+# テストデータ更新：マクドナルドの利回りをランダムに変更
 new_yield = round(random.uniform(1.0, 5.0), 2)
 latest_data = {
     "2702": {
